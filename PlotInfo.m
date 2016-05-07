@@ -1,3 +1,5 @@
+function PlotInfo(fileID)
+
 line = fgets(fileID);
 seg = strsplit(line);
 time = str2num(fscanf(seg(1), '%s'));
@@ -22,4 +24,6 @@ if exist(filename)
     hold all;
 else
     CreateFile()
+end
+
 end
