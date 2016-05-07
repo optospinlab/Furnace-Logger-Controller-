@@ -1,0 +1,9 @@
+Time (h)	Temperature (deg C)	# (header is ignored)
+0	0
+.125	400
+.25	400
+.375	800
+.5	800
+.625	1100
+.75	1100
+.875	0

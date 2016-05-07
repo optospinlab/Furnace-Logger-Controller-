@@ -10,7 +10,7 @@ function Furnace_Logger_Main(varargin)
     global chnNames;        % This cell array contains the name of each of the channels that we measure.
     global chnUnits;        % This cell array contains the corresponding units.
     chnNames = {'Time', 'Temperature',  'Setpoint',  'Duty Cycle', 'H1',    'H2',    'H3',    'H4',    'H5',    'TimeMATLAB'};
-    chnUnits = {'',     'deg C',        'deg C',     '%',          'Volts', 'Volts', 'Volts', 'Volts', 'Volts', '' };
+    chnUnits = {'',     'deg C',        'deg C',     'percent',    'Volts', 'Volts', 'Volts', 'Volts', 'Volts', '' };
                             % Note that the first and last cells will always be
                             % interpreted as the readable timestamp and the
                             % MATLAB timestamp, no matter what is contained in
