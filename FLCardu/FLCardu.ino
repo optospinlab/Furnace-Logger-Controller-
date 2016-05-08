@@ -16,7 +16,8 @@
 
 // Initialize the PID vars
 double Setpoint, Input, Output;
-double Kp=2, Ki=.01, Kd=.5;
+//double Kp=2, Ki=.01, Kd=.5;
+double Kp=3, Ki=.005, Kd=1;
 PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 
 // Initialize the Thermocouple
@@ -127,10 +128,12 @@ void loop() {
     double c = thermocouple.readCelsius();
     if (isnan(c)) {
 #ifdef VERBOSE
-        Serial.println("Something wrong with thermocouple! Turning furnace off momentarily...");
+        Serial.println("Something wrong with thermocouple!"); // Turning furnace off momentarily...
+        Serial.print("Error Code: ");
+        Serial.println(thermocouple.readError());
 #endif
-        analogWrite(COILPIN, 0);
-        analogWrite(DIODEPIN, 0);
+//        analogWrite(COILPIN, 0);      // Errors happen a lot at high temperatures. Not sure why...
+//        analogWrite(DIODEPIN, 0);
     } else {
 #ifdef VERBOSE
         //    Serial.print("newM: ");
