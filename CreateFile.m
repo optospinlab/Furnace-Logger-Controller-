@@ -2,7 +2,7 @@ function fileID = CreateFile(string)
     global chnNames;
     global chnUnits;
 
-    filename = ['AnnealData_' string '.txt'];
+    filename = ['Logs\AnnealData_' string '.txt'];
     
     header = '';
     
