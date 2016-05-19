@@ -12,75 +12,76 @@
 #define H2MINPIN 0
 #define H2MAXPIN 4
 
+#define MAXTEMP  1300
+
 //#define VERBOSE
 
-// Initialize the PID vars
+// Initialize the PID vars.
 double Setpoint, Input, Output;
-//double Kp=2, Ki=.01, Kd=.5;
 double Kp=3, Ki=.005, Kd=1;
 PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 
-// Initialize the Thermocouple
+// Initialize the thermocouple.
 Adafruit_MAX31855 thermocouple(MAXCLK, MAXCS, MAXDO);
 
-// Initialize helper variables
-bool                fine = true;
+// Initialize helper variables.
+unsigned long       newM = 0;           // Stores the current time      (ms since start),
+unsigned long       targetM = 0;        // Stores the next update time  (ms since start),
+unsigned long       tick = 1000;        // Time between updates         (ms).
 
-unsigned long       newM = 0;
-unsigned long       targetM = 0;
-unsigned long       tick = 1000;
+int                 i = 0;              // Iterator.
 
-int                 i = 0;        // Iterator
+char                typeByte = 0;       // For storing the type of message that has been sent from MATLAB.
 
-char                typeByte = 0;
+unsigned char       thermFails = 0;     // Counts the number of thermocouple failures.
 
-bool                annealing = false;
-long                annealStart = 0;
-unsigned long       annealTimes[32];
-float               annealTemps[32];
-unsigned char       annealStep = 0;
+// Initialize annealing vars.
+bool                annealing = false;  // Is there an anneal?
+long                annealStart = 0;    // Holds the start time of the anneal   (ms since start).
+unsigned long       annealTimes[32];    // Holds the times (ms since anneal start)...
+float               annealTemps[32];    // ...and holds the temps (C) for a list of [time, temp] points that comprise an anneal.
+unsigned char       annealStep = 0;     // Hold the index of the [time, temp] point that has been most recently passed.
 
+// Helper function. Self-explanatory. Returns -1 if x1 >= x2.
 inline double interpolate(unsigned long x, unsigned long x1, double y1, unsigned long x2, double y2){
     return (x1 < x2) ? ( ((y2-y1)/((double)(x2-x1)))*((double)(x-x1)) + y1 ) : ( -1 );
 }
 
 void setup() {
-    Serial.begin(74880);
-    pinMode(COILPIN, OUTPUT);
+    Serial.begin(74880);        // Initialize serial (make sure the Baud rates are the same as MATLAB).
+    
+    pinMode(COILPIN, OUTPUT);   // Initialize the coil and diode pins as outputs.
     pinMode(DIODEPIN, OUTPUT);
 
     for (i = H2MINPIN; i <= H2MAXPIN; i++){
-        pinMode(i, INPUT);
+        pinMode(i, INPUT);      // Initialize all the hydrogen sensors.
     }
 
-    //initialize the variables we're linked to
+    // Initialize the variables the PID is linked to, along with the PID.
     Input = 24;
     Setpoint = 0;
-
-    //turn the PID on
     myPID.SetMode(AUTOMATIC);
-//  myPID.SetOutputLimits(0,128);
 }
 
 void loop() {
-    if (Serial.available()){
-        typeByte = Serial.read();
+    if (Serial.available()){        // If MATLAB has something to say...
+        typeByte = Serial.read();   // ...read it.
 
-        if (typeByte == 's'){
-            annealing = false;
-            Setpoint = Serial.parseFloat();
+        if (typeByte == 's'){                       // If that something is a single setpoint...
+            annealing = false;                      // ...stop any anneals...
+            Setpoint = Serial.parseFloat();         // ...and set the Setpoint to the next float in the serial buffer.
 #ifdef VERBOSE
             Serial.print("Setpoint set to ");
             Serial.print(Setpoint);
             Serial.println(" deg C.");
 #endif
         }
-        else if (typeByte == 'a'){
-            annealStart = millis();
-            annealStep = 0;
+        else if (typeByte == 'a'){                  // Otherwise, if that something is an anneal...
+            annealStart = millis();                 // ...record the time that the anneal started...
+            annealStep = 0;                         // ...and set the current step to zero.
 
             i = 0;
-            while (i < 32){                         // Reset list
+            while (i < 32){                         // Then, reset the list of [time, temp] points to [0, -1] points
                 annealTimes[i] = 0;
                 annealTemps[i] = -1;
                 i++;
@@ -89,9 +90,9 @@ void loop() {
             Serial.print("Cleared Anneal List");
 #endif
             i = 0;
-            while (Serial.available() && i < 31){   // Fill list with data
-                annealTimes[i] = (unsigned long)(Serial.parseFloat()*60*60*1000); // Convert to milliseconds
-                annealTemps[i] = Serial.parseFloat();
+            while (Serial.available() && i < 31){                                   // Fill the list (except for the last point) with data
+                annealTimes[i] = (unsigned long)(Serial.parseFloat()*60*60*1000);   // Convert the times (hours) to ms
+                annealTemps[i] = Serial.parseFloat();                               // Do not convert the temperatures
 #ifdef VERBOSE
                 Serial.print("Time: "); Serial.print(  annealTimes[i]);
                 Serial.print("Temp: "); Serial.println(annealTemps[i]);
@@ -104,82 +105,116 @@ void loop() {
             Serial.print("Len:");
             Serial.println(i);
 #endif
-            // if (Serial.available()){ errorcheck(); }
-
-            annealing = true;
+            
+            annealing = true;                       // And start the anneal
+            
+            if (Serial.available()){                // However, if there still is data, stop the anneal (this will not warn the MATLAB program)
+                annealing = false;
+#ifdef VERBOSE
+                Serial.print("Warning: Annealing list too long...");
+#endif
+            }
         }
     }
+    
+    newM = millis();    // Figure out the current time.
 
-    newM = millis();
-
-    if (annealing){
-        if (newM - annealStart > annealTimes[annealStep+1]){
-            annealStep++;
+    if (annealing){                                             // If we are currently annealing...
+        if (newM - annealStart > annealTimes[annealStep+1]){    // ...check to see if we need to move to the next [time, temp] pair...
+            annealStep++;                                       // ...and incriment.
         }
-
+        
+        // Set the setpoint to the linear interpolation of our current step and the next step.
         Setpoint = interpolate(newM - annealStart, annealTimes[annealStep], annealTemps[annealStep], annealTimes[annealStep+1], annealTemps[annealStep+1]);
-
-        if (annealTemps[annealStep+1] == -1){
+        
+        if (Setpoint < 0){                                      // If there was an erro with the thermocouple...
+            Setpoint = 0;
+#ifdef VERBOSE
+            Serial.println("Error with interpolation!");
+#endif
+        }
+        
+        if (annealTemps[annealStep+1] == -1){                   // If the next step is -1 (finished the list), then stop annealing.
             annealing = false;
             Setpoint = 0;
+#ifdef VERBOSE
+            Serial.println("Anneal finished!");
+#endif
         }
     }
 
-    double c = thermocouple.readCelsius();
-    if (isnan(c)) {
+    Input = thermocouple.readCelsius();     // Read the temperature.
+    if (isnan(Input)) {
+        thermFails++;                       // The thermocouple is failing...
 #ifdef VERBOSE
-        Serial.println("Something wrong with thermocouple!"); // Turning furnace off momentarily...
+        Serial.println("Something wrong with thermocouple!");
         Serial.print("Error Code: ");
         Serial.println(thermocouple.readError());
 #endif
-//        analogWrite(COILPIN, 0);      // Errors happen a lot at high temperatures. Not sure why...
-//        analogWrite(DIODEPIN, 0);
+        if (thermFails > 31){
+            analogWrite(COILPIN, 0);        // If there are 32 fails in a row, turn the furnace off...
+            analogWrite(DIODEPIN, 0);
+        }
     } else {
+        thermFails = 0;                     // The thermocouple is not failing...
+        
 #ifdef VERBOSE
-        //    Serial.print("newM: ");
-        //    Serial.print(newM);
-        //    Serial.print(", targetM: ");
-        //    Serial.print(targetM);
-        //    Serial.print(", targetM - tick:");
-        //    Serial.println(targetM - tick);
+//        // Debugging tools
+//        Serial.print("newM: ");
+//        Serial.print(newM);
+//        Serial.print(", targetM: ");
+//        Serial.print(targetM);
+//        Serial.print(", targetM - tick:");
+//        Serial.println(targetM - tick);
 #endif
-        if (targetM < newM && targetM + tick < newM + tick){ // Second check neccessary for integer overflow
+        if (targetM < newM && targetM + tick < newM + tick){    // If it's time to send data to MATLAB... (second check neccessary for long overflow)
             targetM += tick;
+            
 #ifdef VERBOSE
             Serial.print(" C = ");
 #endif
 
-            Serial.print(c);            // Temperature
+            Serial.print(Input);                        // Send the temperature,
+            
+#ifdef VERBOSE
+            Serial.print(" Setpoint =");
+#endif
+            
             Serial.print(" ");
-            Serial.print(Setpoint);     // Setpoint
+            Serial.print(Setpoint);                     // Send the setpoint,
+            
 #ifdef VERBOSE
-        Serial.print(",  Duty Cycle =");
+            Serial.print(",  Duty Cycle =");
 #endif
-        Serial.print(" ");
-        Serial.print(Output/2.55);
+            
+            Serial.print(" ");
+            Serial.print(Output/2.55);                  // Send the duty cycle,
+            
 #ifdef VERBOSE
-        Serial.print(" %");
+            Serial.print(" %");
 #endif
+            
             for (i = H2MINPIN; i <= H2MAXPIN; i++){
 #ifdef VERBOSE
-                Serial.print(", H2 ");
+                Serial.print(", H2 #");
                 Serial.print(i);
                 Serial.print(" =");
 #endif
+                
                 Serial.print(" ");
-                Serial.print((float)analogRead(i));    // H2 Level on sensor i
-                // Serial.print(" ");
+                Serial.print((float)analogRead(i));    // Send the H2 Level on sensor i (out of 1024).
             }
 
             Serial.print("\n");
         }
-
-        Input = c;
-
-        if (fine){
-            myPID.Compute();
-            analogWrite(COILPIN, Output);
+        
+        if (Input < MAXTEMP) {              // If the temperature is under the hardcoded limit...
+            myPID.Compute();                // ...calculate the current duty cycle...
+            analogWrite(COILPIN, Output);   // ...and output the result.
             analogWrite(DIODEPIN, Output);
+        } else {                            // Otherwise...
+            analogWrite(COILPIN, 0);        // ...turn the furnace off.
+            analogWrite(DIODEPIN, 0);
         }
     }
 }
