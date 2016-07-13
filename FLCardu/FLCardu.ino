@@ -2,8 +2,9 @@
 #include <PID_v1.h>
 #include "Adafruit_MAX31855.h"
 
-#define COILPIN  11
-#define DIODEPIN  3
+#define COILPIN     11
+#define WARNPIN     4
+#define DIODEPIN    3
 
 #define MAXDO   8
 #define MAXCS   10
@@ -12,6 +13,7 @@
 #define H2MINPIN 0
 #define H2MAXPIN 4
 
+#define WARNTEMP 200
 #define MAXTEMP  1300
 
 //#define VERBOSE
@@ -35,6 +37,8 @@ char                typeByte = 0;       // For storing the type of message that 
 
 unsigned char       thermFails = 0;     // Counts the number of thermocouple failures.
 
+bool                blink = false;       // To keep track of whether the blinking diode is on or off.
+
 // Initialize annealing vars.
 bool                annealing = false;  // Is there an anneal?
 long                annealStart = 0;    // Holds the start time of the anneal   (ms since start).
@@ -49,13 +53,15 @@ inline double interpolate(unsigned long x, unsigned long x1, double y1, unsigned
 
 void setup() {
     Serial.begin(74880);        // Initialize serial (make sure the Baud rates are the same as MATLAB).
-    
-    pinMode(COILPIN, OUTPUT);   // Initialize the coil and diode pins as outputs.
-    pinMode(DIODEPIN, OUTPUT);
 
-    for (i = H2MINPIN; i <= H2MAXPIN; i++){
-        pinMode(i, INPUT);      // Initialize all the hydrogen sensors.
-    }
+    pinMode(COILPIN, OUTPUT);   // Initialize the coil and the two diode (warning and coil) pins as outputs.
+    pinMode(WARNPIN, OUTPUT);
+    pinMode(DIODEPIN, OUTPUT);
+//    digitalWrite(WARNPIN, LOW);
+
+//    for (i = H2MINPIN; i <= H2MAXPIN; i++){
+//        pinMode(i, INPUT);      // Initialize all the hydrogen sensors.
+//    }
 
     // Initialize the variables the PID is linked to, along with the PID.
     Input = 24;
@@ -105,9 +111,9 @@ void loop() {
             Serial.print("Len:");
             Serial.println(i);
 #endif
-            
+
             annealing = true;                       // And start the anneal
-            
+
             if (Serial.available()){                // However, if there still is data, stop the anneal (this will not warn the MATLAB program)
                 annealing = false;
 #ifdef VERBOSE
@@ -116,24 +122,24 @@ void loop() {
             }
         }
     }
-    
+
     newM = millis();    // Figure out the current time.
 
     if (annealing){                                             // If we are currently annealing...
         if (newM - annealStart > annealTimes[annealStep+1]){    // ...check to see if we need to move to the next [time, temp] pair...
             annealStep++;                                       // ...and incriment.
         }
-        
+
         // Set the setpoint to the linear interpolation of our current step and the next step.
         Setpoint = interpolate(newM - annealStart, annealTimes[annealStep], annealTemps[annealStep], annealTimes[annealStep+1], annealTemps[annealStep+1]);
-        
+
         if (Setpoint < 0){                                      // If there was an erro with the thermocouple...
             Setpoint = 0;
 #ifdef VERBOSE
             Serial.println("Error with interpolation!");
 #endif
         }
-        
+
         if (annealTemps[annealStep+1] == -1){                   // If the next step is -1 (finished the list), then stop annealing.
             annealing = false;
             Setpoint = 0;
@@ -143,7 +149,7 @@ void loop() {
         }
     }
 
-    Input = thermocouple.readCelsius();     // Read the temperature.
+    Input = thermocouple.readCelsius();     // Read the temperature
     if (isnan(Input)) {
         thermFails++;                       // The thermocouple is failing...
 #ifdef VERBOSE
@@ -157,7 +163,8 @@ void loop() {
         }
     } else {
         thermFails = 0;                     // The thermocouple is not failing...
-        
+        Input = .9632*Input + 63.682;       // Convert the temperature according to an experimental regression.
+
 #ifdef VERBOSE
 //        // Debugging tools
 //        Serial.print("newM: ");
@@ -169,45 +176,53 @@ void loop() {
 #endif
         if (targetM < newM && targetM + tick < newM + tick){    // If it's time to send data to MATLAB... (second check neccessary for long overflow)
             targetM += tick;
-            
+
+            if (Input > WARNTEMP || blink) {
+                    blink = !blink;
+                    digitalWrite(WARNPIN, (blink)?(HIGH):(LOW));
+#ifdef VERBOSE
+                    Serial.print((blink)?(HIGH):(LOW));
+#endif
+            }
+
 #ifdef VERBOSE
             Serial.print(" C = ");
 #endif
 
             Serial.print(Input);                        // Send the temperature,
-            
+
 #ifdef VERBOSE
             Serial.print(" Setpoint =");
 #endif
-            
+
             Serial.print(" ");
             Serial.print(Setpoint);                     // Send the setpoint,
-            
+
 #ifdef VERBOSE
             Serial.print(",  Duty Cycle =");
 #endif
-            
+
             Serial.print(" ");
             Serial.print(Output/2.55);                  // Send the duty cycle,
-            
+
 #ifdef VERBOSE
             Serial.print(" %");
 #endif
-            
+
             for (i = H2MINPIN; i <= H2MAXPIN; i++){
 #ifdef VERBOSE
                 Serial.print(", H2 #");
                 Serial.print(i);
                 Serial.print(" =");
 #endif
-                
+
                 Serial.print(" ");
                 Serial.print((float)analogRead(i));    // Send the H2 Level on sensor i (out of 1024).
             }
 
             Serial.print("\n");
         }
-        
+
         if (Input < MAXTEMP) {              // If the temperature is under the hardcoded limit...
             myPID.Compute();                // ...calculate the current duty cycle...
             analogWrite(COILPIN, Output);   // ...and output the result.
